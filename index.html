@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WristMouse モニター</title>
+<style>
+:root{--bg:#0f1519;--panel:#172027;--line:#2a3943;--text:#e6eef2;--sub:#8fa3ae;--accent:#5fd0c5;--on:#04211e;--warn:#ff8a5c}
+@media (prefers-color-scheme:light){:root{--bg:#eef3f4;--panel:#fff;--line:#cfdadd;--text:#16242b;--sub:#53666f;--accent:#0a8277;--on:#fff;--warn:#d9531e}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.7 system-ui,"Hiragino Sans","Yu Gothic",sans-serif;background:var(--bg);color:var(--text)}
+header{padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:20px;letter-spacing:.02em}
+header p{margin:2px 0 0;color:var(--sub);font-size:13px}
+main{display:grid;grid-template-columns:330px 1fr;gap:16px;padding:16px 20px 30px;max-width:1120px;margin:auto}
+@media(max-width:840px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+section:last-child{margin-bottom:0}
+h2{margin:0 0 10px;font-size:14px;color:var(--sub);font-weight:600}
+.row{display:flex;gap:8px;margin-bottom:8px}
+.k{flex:1;text-align:center;padding:9px 4px;border:1px solid var(--line);border-radius:8px;color:var(--sub);font-size:14px}
+.k.on{background:var(--accent);color:var(--on);border-color:var(--accent);font-weight:600}
+.k.lock.on{background:var(--warn);border-color:var(--warn);color:#fff}
+.big{font-size:28px;font-weight:700;line-height:1.2}
+.segs{display:flex;gap:4px;margin:8px 0}
+.segs i{flex:1;height:12px;border-radius:3px;background:var(--line)}
+.segs i.f{background:var(--accent)}
+button{font:inherit;padding:8px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--on);cursor:pointer;font-weight:600}
+button:focus-visible{outline:3px solid var(--text);outline-offset:2px}
+ul{list-style:none;margin:0;padding:0;font-size:13px}
+li{padding:4px 0;border-bottom:1px solid var(--line);color:var(--sub)}
+li b{color:var(--text);font-weight:600}
+li:last-child{border-bottom:0}
+canvas{display:block;width:100%;height:auto;border-radius:8px;background:var(--bg);border:1px solid var(--line);cursor:none}
+small{display:block;color:var(--sub);font-size:12px;margin-top:8px;line-height:1.6}
+.bar{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>WristMouse モニター</h1>
+  <p>手首マウスの動きと速度段階を確認して、シューティングゲームで操作を試すページです</p>
+</header>
+<main>
+<div>
+  <section>
+    <h2>いまの入力（ブラウザが受け取った操作）</h2>
+    <div class="row"><div class="k" id="bl">左クリック</div><div class="k" id="br">右クリック</div></div>
+    <div class="row"><div class="k" id="wu">上スクロール</div><div class="k" id="wd">下スクロール</div></div>
+    <div>カーソル速度　<b id="spd">0</b> px/秒</div>
+  </section>
+  <section>
+    <h2>速度段階（USB接続で受信）</h2>
+    <div class="big" id="lvText">段階 4/7（初期値）</div>
+    <div class="segs" id="segs"></div>
+    <div class="row"><div class="k lock" id="lock">ロック解除中</div></div>
+    <div class="row"><div class="k" id="su">上ボタン</div><div class="k" id="sd">下ボタン</div></div>
+    <div class="bar"><button id="conn">USBで接続する</button><span id="state" style="font-size:13px;color:var(--sub)">未接続</span></div>
+    <small>ChromeかEdgeで開き、マイコンをUSBで接続してください。Arduino IDEのシリアルモニタは閉じておきます。切断するときはページを再読み込みしてください。</small>
+  </section>
+  <section>
+    <h2>できごとの記録</h2>
+    <ul id="log"><li>接続するとここに速度の変更が出ます</li></ul>
+  </section>
+</div>
+<div>
+  <section>
+    <h2>シューティングゲーム（30秒）</h2>
+    <div class="bar"><button id="start">スタート</button><span style="font-size:13px;color:var(--sub)">左クリックで撃つ／右クリックで範囲ショット（3秒に1回）</span></div>
+    <canvas id="game" width="640" height="400" aria-label="シューティングゲーム"></canvas>
+    <small>的は約2秒で消えます。ゲーム中は画面内のスクロールが止まります。</small>
+  </section>
+  <section>
+    <h2>記録（速度段階ごとの比較用）</h2>
+    <ul id="res"><li>まだ記録がありません</li></ul>
+  </section>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const LV=[2000,1200,800,600,400,300,200];
+let lvIdx=3,lvKnown=false,connected=false;
+
+/* ---------- 入力モニター ---------- */
+const setOn=(id,v)=>$(id).classList.toggle('on',v);
+const flash=id=>{const e=$(id);e.classList.add('on');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('on'),300)};
+addEventListener('mousedown',e=>{if(e.button===0)setOn('bl',true);if(e.button===2)setOn('br',true)});
+addEventListener('mouseup',e=>{if(e.button===0)setOn('bl',false);if(e.button===2)setOn('br',false)});
+addEventListener('wheel',e=>flash(e.deltaY<0?'wu':'wd'),{passive:true});
+let dist=0;
+addEventListener('mousemove',e=>{dist+=Math.hypot(e.movementX,e.movementY)});
+setInterval(()=>{$('spd').textContent=Math.round(dist*4);dist=0},250);
+
+/* ---------- 記録・表示 ---------- */
+function log(msg){
+  const ul=$('log');if(ul.children.length===1&&!ul.firstChild.dataset.k)ul.innerHTML='';
+  const li=document.createElement('li');li.dataset.k=1;
+  li.innerHTML='<b>'+new Date().toLocaleTimeString('ja-JP')+'</b>　'+msg;
+  ul.prepend(li);while(ul.children.length>8)ul.lastChild.remove();
+}
+const segs=$('segs');for(let i=0;i<7;i++)segs.appendChild(document.createElement('i'));
+function showLevel(){
+  [...segs.children].forEach((s,i)=>s.classList.toggle('f',i<=lvIdx));
+  $('lvText').textContent='段階 '+(lvIdx+1)+'/7（'+(lvKnown?LV[lvIdx]:'初期値')+'）';
+}
+showLevel();
+const levelText=()=>connected?'段階 '+(lvIdx+1)+'（'+LV[lvIdx]+'）':'未接続';
+
+/* ---------- シリアル受信（Web Serial） ---------- */
+function handleLine(s){
+  let m;
+  if((m=s.match(/(速く|遅く).*?(\d+)\/\d+（(\d+)）/))){lvIdx=+m[2]-1;lvKnown=true;showLevel();log(m[1]+'しました：段階 '+m[2]+'/7（'+m[3]+'）');}
+  else if((m=s.match(/速度:\s*(\d+)/))&&LV.includes(+m[1])){lvIdx=LV.indexOf(+m[1]);lvKnown=true;showLevel();log('速度 '+m[1]);}
+  else if(/ロック中/.test(s)){setOn('lock',true);$('lock').textContent='ロック中';log('ロックしました');}
+  else if(/動作中/.test(s)){setOn('lock',false);$('lock').textContent='ロック解除中';log('ロックを解除しました');}
+  else if((m=s.match(/上=(\d)\s*下=(\d)/))){setOn('su',m[1]==='1');setOn('sd',m[2]==='1');}
+  else if(/PCと接続/.test(s))log('PCとBluetooth接続しました');
+  else if(/切断/.test(s))log('Bluetoothが切断されました');
+}
+$('conn').onclick=async()=>{
+  if(!('serial' in navigator)){$('state').textContent='このブラウザは非対応です。ChromeかEdgeで開いてください';return;}
+  try{
+    const port=await navigator.serial.requestPort();
+    await port.open({baudRate:115200});
+    connected=true;$('state').textContent='接続中';$('conn').disabled=true;
+    const dec=new TextDecoderStream();port.readable.pipeTo(dec.writable).catch(()=>{});
+    const rd=dec.readable.getReader();let buf='';
+    for(;;){
+      const {value,done}=await rd.read();if(done)break;
+      buf+=value;let i;
+      while((i=buf.indexOf('\n'))>=0){handleLine(buf.slice(0,i).trim());buf=buf.slice(i+1);}
+    }
+  }catch(e){$('state').textContent='接続できませんでした：'+e.message;$('conn').disabled=false;}
+  connected=false;
+};
+
+/* ---------- シューティングゲーム ---------- */
+const cv=$('game'),g=cv.getContext('2d');
+let st={run:false,t:30,score:0,shots:0,hits:0,targets:[],mx:320,my:200,cd:0,sp:0};
+let msg='スタートを押してください',last=0,res=[];
+try{res=JSON.parse(localStorage.getItem('wm_res')||'[]')}catch(e){}
+const acc=()=>st.shots?Math.round(st.hits/st.shots*100):0;
+const col=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function renderRes(){
+  const ul=$('res');
+  ul.innerHTML=res.length?res.map(r=>'<li><b>'+r.s+'点</b>　命中率 '+r.a+'%　速度 '+r.l+'</li>').join(''):'<li>まだ記録がありません</li>';
+}
+renderRes();
+
+$('start').onclick=()=>{
+  st={run:true,t:30,score:0,shots:0,hits:0,targets:[],mx:st.mx,my:st.my,cd:0,sp:0};
+  last=performance.now();requestAnimationFrame(loop);
+};
+function finish(){
+  st.run=false;msg='終了　'+st.score+'点　命中率 '+acc()+'%';
+  res.unshift({s:st.score,a:acc(),l:levelText()});res=res.slice(0,8);
+  try{localStorage.setItem('wm_res',JSON.stringify(res))}catch(e){}
+  renderRes();
+}
+function loop(now){
+  const dt=Math.min((now-last)/1000,.1);last=now;
+  if(st.run){
+    st.t-=dt;st.sp-=dt;st.cd=Math.max(0,st.cd-dt);
+    if(st.sp<=0){
+      const r=14+Math.random()*16;
+      st.targets.push({x:r+Math.random()*(640-2*r),y:r+30+Math.random()*(340-2*r),r,life:2.2});st.sp=.6;
+    }
+    st.targets.forEach(o=>o.life-=dt);st.targets=st.targets.filter(o=>o.life>0);
+    if(st.t<=0)finish();
+  }
+  draw();if(st.run)requestAnimationFrame(loop);
+}
+function shoot(extra){
+  st.shots++;let h=0;
+  st.targets=st.targets.filter(o=>{if(Math.hypot(o.x-st.mx,o.y-st.my)<=o.r+extra){h++;return false}return true});
+  if(h)st.hits++;st.score+=h*10;
+}
+function draw(){
+  g.clearRect(0,0,640,400);
+  st.targets.forEach(o=>{
+    g.globalAlpha=Math.min(1,o.life/.5);
+    [1,.6,.25].forEach((k,i)=>{g.beginPath();g.arc(o.x,o.y,o.r*k,0,7);g.fillStyle=i===1?col('--bg'):col('--warn');g.fill()});
+    g.globalAlpha=1;
+  });
+  g.strokeStyle=col('--accent');g.lineWidth=2;g.beginPath();
+  g.arc(st.mx,st.my,10,0,7);
+  g.moveTo(st.mx-18,st.my);g.lineTo(st.mx+18,st.my);g.moveTo(st.mx,st.my-18);g.lineTo(st.mx,st.my+18);g.stroke();
+  g.font='16px system-ui,sans-serif';g.fillStyle=col('--text');g.textAlign='left';
+  g.fillText('スコア '+st.score+'　残り '+Math.max(0,st.t).toFixed(1)+'秒　命中率 '+acc()+'%',12,24);
+  if(st.run){g.fillStyle=col('--sub');g.fillText(st.cd>0?'範囲ショット 待機 '+st.cd.toFixed(1)+'秒':'範囲ショット 使えます',12,388);}
+  else{g.fillStyle=col('--sub');g.textAlign='center';g.fillText(msg,320,200);}
+}
+cv.addEventListener('mousemove',e=>{
+  const r=cv.getBoundingClientRect();
+  st.mx=(e.clientX-r.left)*640/r.width;st.my=(e.clientY-r.top)*400/r.height;if(!st.run)draw();
+});
+cv.addEventListener('mousedown',e=>{
+  if(!st.run)return;e.preventDefault();
+  if(e.button===0)shoot(0);
+  else if(e.button===2&&st.cd<=0){shoot(30);st.cd=3;}
+});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('wheel',e=>{if(st.run)e.preventDefault()},{passive:false});
+draw();
+</script>
+</body>
+</html>
