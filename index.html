@@ -34,12 +34,18 @@ li:last-child{border-bottom:0}
 canvas{display:block;width:100%;height:auto;border-radius:8px;background:var(--bg);border:1px solid var(--line);cursor:none}
 small{display:block;color:var(--sub);font-size:12px;margin-top:8px;line-height:1.6}
 .bar{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{background:none;color:var(--accent)}
+.tabs button[aria-selected=true]{background:var(--accent);color:var(--on)}
+button.ghost{background:none;color:var(--accent)}
+.sw{width:30px;height:30px;padding:0;border-radius:50%;border:2px solid var(--line)}
+.sw[aria-pressed=true]{border-color:var(--text);outline:2px solid var(--accent)}
 </style>
 </head>
 <body>
 <header>
   <h1>WristMouse モニター</h1>
-  <p>手首マウスの動きと速度段階を確認して、シューティングゲームで操作を試すページです</p>
+  <p>手首マウスの動きと速度段階を確認して、シューティングゲームとお絵かきで操作を試すページです</p>
 </header>
 <main>
 <div>
@@ -64,16 +70,36 @@ small{display:block;color:var(--sub);font-size:12px;margin-top:8px;line-height:1
   </section>
 </div>
 <div>
-  <section>
-    <h2>シューティングゲーム（30秒）</h2>
-    <div class="bar"><button id="start">スタート</button><span style="font-size:13px;color:var(--sub)">左クリックで撃つ／右クリックで範囲ショット（3秒に1回）</span></div>
-    <canvas id="game" width="640" height="400" aria-label="シューティングゲーム"></canvas>
-    <small>的は約2秒で消えます。ゲーム中は画面内のスクロールが止まります。</small>
-  </section>
-  <section>
-    <h2>記録（速度段階ごとの比較用）</h2>
-    <ul id="res"><li>まだ記録がありません</li></ul>
-  </section>
+  <div class="tabs" role="tablist">
+    <button role="tab" id="t1" aria-selected="true" aria-controls="p1">シューティング</button>
+    <button role="tab" id="t2" aria-selected="false" aria-controls="p2">お絵かき</button>
+  </div>
+  <div id="p1" role="tabpanel" aria-labelledby="t1">
+    <section>
+      <h2>シューティングゲーム（30秒）</h2>
+      <div class="bar"><button id="start">スタート</button><span style="font-size:13px;color:var(--sub)">左クリックで撃つ／右クリックで範囲ショット（3秒に1回）</span></div>
+      <canvas id="game" width="640" height="400" aria-label="シューティングゲーム"></canvas>
+      <small>的は約2秒で消えます。ゲーム中は画面内のスクロールが止まります。</small>
+    </section>
+    <section>
+      <h2>記録（速度段階ごとの比較用）</h2>
+      <ul id="res"><li>まだ記録がありません</li></ul>
+    </section>
+  </div>
+  <div id="p2" role="tabpanel" aria-labelledby="t2" hidden>
+    <section>
+      <h2>お絵かき</h2>
+      <div class="bar" id="pal"></div>
+      <div class="bar">
+        <button id="undo" class="ghost">元に戻す</button>
+        <button id="clr" class="ghost">全部消す</button>
+        <button id="save">画像として保存</button>
+        <span style="font-size:13px;color:var(--sub)">太さ <b id="sz">6</b></span>
+      </div>
+      <canvas id="paint" width="640" height="400" aria-label="お絵かきキャンバス" style="cursor:crosshair"></canvas>
+      <small>左クリックで描く／右クリックで消しゴム／スクロールで太さを変えます。保存するとPNG画像になります。</small>
+    </section>
+  </div>
 </div>
 </main>
 <script>
@@ -203,6 +229,48 @@ cv.addEventListener('mousedown',e=>{
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 cv.addEventListener('wheel',e=>{if(st.run)e.preventDefault()},{passive:false});
 draw();
+
+/* ---------- タブ ---------- */
+const tabs=[...document.querySelectorAll('[role=tab]')];
+tabs.forEach(t=>t.onclick=()=>{
+  tabs.forEach(x=>{const on=x===t;x.setAttribute('aria-selected',on);$(x.getAttribute('aria-controls')).hidden=!on});
+  if(t.id==='t1')draw();
+});
+
+/* ---------- お絵かき ---------- */
+const pv=$('paint'),pc=pv.getContext('2d');
+let color='#16242b',size=6,hist=[],pen={on:false,erase:false,x:0,y:0};
+const paper=()=>{pc.fillStyle='#fff';pc.fillRect(0,0,640,400)};
+paper();
+const COLORS=[['黒','#16242b'],['赤','#e5484d'],['橙','#f5a524'],['黄','#f2d03b'],['緑','#2fa66a'],['青','#2e86de'],['紫','#8e5bd9']];
+COLORS.forEach(([n,c],i)=>{
+  const b=document.createElement('button');
+  b.className='sw';b.style.background=c;b.title=n;b.setAttribute('aria-label',n);b.setAttribute('aria-pressed',i===0);
+  b.onclick=()=>{color=c;[...$('pal').children].forEach(x=>x.setAttribute('aria-pressed',x===b))};
+  $('pal').appendChild(b);
+});
+const snap=()=>{hist.push(pc.getImageData(0,0,640,400));if(hist.length>15)hist.shift()};
+const pos=e=>{const r=pv.getBoundingClientRect();return[(e.clientX-r.left)*640/r.width,(e.clientY-r.top)*400/r.height]};
+function stroke(x,y){
+  pc.strokeStyle=pen.erase?'#fff':color;pc.lineWidth=pen.erase?size*3:size;pc.lineCap=pc.lineJoin='round';
+  pc.beginPath();pc.moveTo(pen.x,pen.y);pc.lineTo(x+.01,y);pc.stroke();pen.x=x;pen.y=y;
+}
+pv.addEventListener('pointerdown',e=>{
+  if(e.button!==0&&e.button!==2)return;e.preventDefault();
+  snap();pv.setPointerCapture(e.pointerId);pen.on=true;pen.erase=e.button===2;
+  [pen.x,pen.y]=pos(e);stroke(pen.x,pen.y);
+});
+pv.addEventListener('pointermove',e=>{if(pen.on){const[x,y]=pos(e);stroke(x,y)}});
+['pointerup','pointercancel'].forEach(n=>pv.addEventListener(n,()=>{pen.on=false}));
+pv.addEventListener('contextmenu',e=>e.preventDefault());
+pv.addEventListener('wheel',e=>{e.preventDefault();size=Math.max(1,Math.min(40,size+(e.deltaY<0?2:-2)));$('sz').textContent=size},{passive:false});
+$('undo').onclick=()=>{const h=hist.pop();if(h)pc.putImageData(h,0,0)};
+$('clr').onclick=()=>{snap();paper()};
+$('save').onclick=()=>pv.toBlob(b=>{
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);
+  a.download='wristmouse-'+new Date().toISOString().slice(0,19).replace(/[-:T]/g,'')+'.png';
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+});
 </script>
 </body>
 </html>
